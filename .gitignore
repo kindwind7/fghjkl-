@@ -1,0 +1,7 @@
+.env
+Test_codes/
+ml-100k/
+chroma_db/
+chromedb/
+.idea/
+.venv/
