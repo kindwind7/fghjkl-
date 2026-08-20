@@ -1,0 +1,17 @@
+
+
+[theme]
+base="light"
+primaryColor = "#000000"
+backgroundColor = "#FF2B05"
+secondaryBackgroundColor = "#f70000"
+textColor = "#ffffff"
+borderColor = "#f70000"
+font = "Geist Pixel"
+headingFont = "Geist Pixel"
+baseRadius = "full"
+[[theme.fontFaces]]
+family = "Geist Pixel"
+url = "https://fonts.gstatic.com/s/geistpixel/v1/CSRs4zxZluGGW3oyI0A_AN0hQBvYDU4hBmqoKzA8XT6ktqLHtqCv.woff"
+weight = 400
+style = "normal"
