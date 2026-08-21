@@ -3,6 +3,8 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 import chromadb
+
+
 from doc_helper import read_file
 load_dotenv()
 import tempfile, os
@@ -11,6 +13,9 @@ DB_PATH = os.path.join(tempfile.gettempdir(), "chroma_db")
 db = chromadb.PersistentClient(path=DB_PATH)
 brain=db.get_or_create_collection("documents")
 memory=db.get_or_create_collection("conversations")
+registered_pokemon = db.get_or_create_collection("registered_pokemon")
+
+
 
 def chunk_it(text,size=400):
     bits =text.split(". ")
@@ -47,6 +52,29 @@ def store_conversation (question,answer):
     )
     return len(chunks)
 
+def get_registered_pokemon():
+    results = registered_pokemon.get(include=["metadatas"])
+    pokemon_list = []
+    if results and results.get("metadatas"):
+        for metadata in results["metadatas"]:
+            if metadata and "pokemon" in metadata:
+                pokemon_list.append(metadata["pokemon"])
+    pokemon_list = list(set(pokemon_list))
+    pokemon_list.sort()
+    return pokemon_list
+
+
+def register_pokemon(pokemon_name):
+    pokemon_name = pokemon_name.strip()
+    if not pokemon_name:
+        return False
+    registered_pokemon.upsert(
+        ids=[pokemon_name.lower()],
+        documents=[f"Registered Pokémon: {pokemon_name}"],
+        metadatas=[{"pokemon": pokemon_name}],
+    )
+    return True
+
 st.set_page_config(
     page_title="POKEDEX",
     layout="wide",
@@ -57,7 +85,7 @@ st.html("""
 <style>
   .stApp {
     background-image:
-      linear-gradient(rgba(6,7,7,.40), rgba(6,7,7,.40)),
+      linear-gradient(rgba(12,5,6,.30), rgba(12,5,6,.30)),
       url("https://archives.bulbagarden.net/media/upload/0/0b/Pokédex_entry_PE.png");
     background-size: cover;
     background-attachment: fixed;
@@ -69,13 +97,9 @@ st.html("""
 </style>
 """)
 
-
-st.image("Poke_Ball.webp", width=200)
+st.image("Poke_Ball.webp", width=100)
 
 st.caption("Ask me about anything Pokemon trainer!")
-
-
-
 
 
 
@@ -84,6 +108,9 @@ st.title("POKEDEX ")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
+if "pokemon_to_register" not in st.session_state:
+    st.session_state.pokemon_to_register = None
 
 
 with st.sidebar:
@@ -96,6 +123,14 @@ with st.sidebar:
     n_chunks=st.slider("Number of Chunks",0,15,3)
     model =st.selectbox("model",["openai/gpt-oss-120b","openai/gpt-oss-20b"])
     stream_it=st.checkbox("stream it",value=True)
+    st.divider()
+    st.subheader("Registered Pokémon in your Pokedex")
+    registered = get_registered_pokemon()
+    if registered:
+        for pokemon in registered:
+            st.write(f" {pokemon}")
+    else:
+        st.caption("You haven't registered any Pokémon yet.")
     if st.button("save"):
         st.write(f"saved, your mood is {mood} and your creativity is {creativity}")
     if st.button("clear chat"):
@@ -125,28 +160,27 @@ for old in st.session_state.messages:
         st.markdown(old["content"])
 
 
+user_input = st.chat_input("Ask something",accept_file=True,file_type=["pdf","txt","png","jpeg","jpg","gif","webp"])
 
 
-
-
-user_input=st.chat_input("ask smth",accept_file=True,file_type=["pdf","txt"])
 
 if user_input:
-    prompt=user_input.text
+    prompt = user_input.text
     if user_input.files:
-        with st.spinner(f"Proccessing {user_input.files[0].name}.."):
-            n=store_documents(user_input.files[0])
-        st.success(f"Stored {n} chunks from {user_input.files[0].name}")
+        with st.spinner(f"Reading the scroll of {user_input.files[0].name}.."):
+            n = store_documents(user_input.files[0])
+        st.success(f"{n} fragments added to the archives, from {user_input.files[0].name}")
 
-if user_input and prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    client = OpenAI(
-        base_url="https://api.groq.com/openai/v1",
-        api_key=os.getenv("GITHUB_TOKEN") or st.secrets["GITHUB_TOKEN"]
-    )
-
+    if user_input and prompt:
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        client = OpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=os.getenv("GITHUB_TOKEN") or st.secrets["GITHUB_TOKEN"],
+        )
     with st.chat_message("user"):
         st.write(prompt)
+
+
 
     notes = ""
     if brain.count() > 0:
@@ -176,12 +210,12 @@ if user_input and prompt:
         full_prompt = prompt
 
     with st.chat_message("assistant"):
-        stream=client.chat.completions.create(
+        stream = client.chat.completions.create(
             model=model,
             temperature=creativity,
             messages=[{"role": "system", "content": SYSTEM_PROMPT}]
                      + st.session_state.messages[-message_history:-1]
-                    +[{"role": "user", "content": full_prompt}],
+                     + [{"role": "user", "content": full_prompt}],
             stream=True,
         )
         thinking = st.expander("thinking", expanded=True).empty()
@@ -198,20 +232,32 @@ if user_input and prompt:
     st.session_state.messages.append({"role": "assistant", "content": a})
     store_conversation(prompt,a)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    registration_prompt = (
+        "Extract the main Pokémon name mentioned in the following user query. "
+        "Respond ONLY with the name of the Pokémon (e.g., 'Pikachu'). "
+        "If no Pokémon is mentioned, respond strictly with 'NONE'.\n\n"
+        f"User Query: {prompt}"
+    )
+    registration_response = client.chat.completions.create(
+        model=model,
+        temperature=0,
+        messages=[{"role": "system", "content": registration_prompt}],
+    )
+    pokemon_name = registration_response.choices[0].message.content.strip()
+    if pokemon_name.upper() != "NONE":
+        st.session_state.pokemon_to_register = pokemon_name
+    else:
+        st.session_state.pokemon_to_register = None
+    st.rerun()
+if st.session_state.pokemon_to_register:
+    pname = st.session_state.pokemon_to_register
+    st.divider()
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.info(f"Would you like to register **{pname}** to your Pokedex?")
+    with col2:
+        if st.button(f"Register {pname}", key="btn_register_poke"):
+            if register_pokemon(pname):
+                st.session_state.pokemon_to_register = None
+                st.success(f"Registered {pname}!")
+                st.rerun()
